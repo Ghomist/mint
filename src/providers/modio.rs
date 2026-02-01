@@ -20,7 +20,7 @@ fn re_mod() -> &'static regex::Regex {
     RE_MOD.get_or_init(|| regex::Regex::new("^https://mod\\.io/g/drg/m/(?P<name_id>[^/#]+)/?(?:#(?:(?P<mod_id>\\d+)(?:/(?P<modfile_id>\\d+))?|[a-z]+))?$").unwrap())
 }
 
-fn parse_url(url: &str) -> Result<ModIoModUrl, ProviderError> {
+fn parse_url(url: &str) -> Result<ModIoModUrl<'_>, ProviderError> {
     let captures = re_mod().captures(url).context(InvalidUrlSnafu {
         url: url.to_string(),
     })?;
@@ -234,9 +234,7 @@ pub enum DrgModioError {
         url: String,
         mod_id: u32,
     },
-    #[snafu(display(
-        "failed to fetch dependencies for mod <{url}> (mod_id = {mod_id}): {source}"
-    ))]
+    #[snafu(display("failed to fetch dependencies for mod <{url}> (mod_id = {mod_id}): {source}"))]
     FetchDependenciesFailed {
         source: modio::Error,
         url: String,
@@ -274,7 +272,7 @@ pub trait DrgModio: Sync + Send {
         modfile_id: u32,
     ) -> Result<modio::files::File, DrgModioError>;
     async fn fetch_dependencies(&self, url: String, mod_id: u32)
-        -> Result<Vec<u32>, DrgModioError>;
+    -> Result<Vec<u32>, DrgModioError>;
     async fn fetch_mods_by_name(
         &self,
         name_id: &str,
@@ -458,10 +456,10 @@ impl DrgModio for modio::Modio {
         use modio::filter::In;
         use modio::filter::NotIn;
 
+        use modio::mods::EventType as EventTypes;
+        use modio::mods::filters::DateAdded;
         use modio::mods::filters::events::EventType;
         use modio::mods::filters::events::ModId;
-        use modio::mods::filters::DateAdded;
-        use modio::mods::EventType as EventTypes;
 
         let events = self
             .game(MODIO_DRG_ID)
@@ -597,7 +595,7 @@ impl<M: DrgModio + Send + Sync> ModProvider for ModioProvider<M> {
                     }
                 }
 
-                let deps = dep_ids
+                dep_ids
                     .iter()
                     .filter_map(|id| match name_map.get(id) {
                         Some(name) => Some(format_spec(name, *id, None)),
@@ -606,9 +604,7 @@ impl<M: DrgModio + Send + Sync> ModProvider for ModioProvider<M> {
                             None
                         }
                     })
-                    .collect();
-
-                deps
+                    .collect()
             };
 
             Ok(ModResponse::Resolve(ModInfo {
@@ -733,13 +729,12 @@ impl<M: DrgModio + Send + Sync> ModProvider for ModioProvider<M> {
         {
             Ok(
                 if let Some(path) = {
-                    let path = cache
+                    cache
                         .read()
                         .unwrap()
                         .get::<ModioCache>(MODIO_PROVIDER_ID)
                         .and_then(|c| c.modfile_blobs.get(&modfile_id))
-                        .and_then(|r| blob_cache.get_path(r));
-                    path
+                        .and_then(|r| blob_cache.get_path(r))
                 } {
                     if let Some(tx) = tx {
                         tx.send(FetchProgress::Complete {
